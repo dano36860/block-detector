@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Blocked Site Detector</title>
+<style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    input { width: 300px; padding: 5px; }
+    button { padding: 5px 10px; margin-left: 5px; }
+    #results { margin-top: 20px; }
+    iframe { display: none; }
+</style>
+</head>
+<body>
+<h1>Blocked Site Detector</h1>
+
+<p>Enter a URL to check if it might be blocked:</p>
+<input type="text" id="urlInput" placeholder="https://example.com">
+<button onclick="checkSite()">Check</button>
+
+<div id="results"></div>
+
+<script>
+async function checkSite() {
+    const url = document.getElementById('urlInput').value.trim();
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = `<p>Checking ${url}...</p>`;
+
+    if (!url) return alert("Please enter a URL");
+
+    // 1️⃣ Check network access via fetch
+    let networkBlocked = false;
+    try {
+        await fetch(url, { method: 'HEAD', mode: 'no-cors' });
+        resultsDiv.innerHTML += "<p>✅ Network request sent successfully</p>";
+    } catch (err) {
+        networkBlocked = true;
+        resultsDiv.innerHTML += "<p>⚠ Network request failed — might be blocked by network/firewall</p>";
+    }
+
+    // 2️⃣ Check if redirected to known block page
+    const currentURL = window.location.href;
+    if (currentURL.startsWith("chrome-extension://") || currentURL.includes("blocked")) {
+        resultsDiv.innerHTML += "<p>⚠ Redirect detected — possibly blocked by extension</p>";
+    }
+
+    // 3️⃣ Check via iframe load/error
+    const iframe = document.createElement('iframe');
+    iframe.src = url;
+    iframe.onload = () => {
+        resultsDiv.innerHTML += "<p>✅ Iframe loaded successfully — site probably accessible</p>";
+        document.body.removeChild(iframe);
+    };
+    iframe.onerror = () => {
+        resultsDiv.innerHTML += "<p>⚠ Iframe failed to load — site might be blocked or redirected</p>";
+        document.body.removeChild(iframe);
+    };
+    document.body.appendChild(iframe);
+
+    // 4️⃣ Optional: adblock / extension check
+    const testDiv = document.createElement('div');
+    testDiv.className = 'adsbox';
+    document.body.appendChild(testDiv);
+    const blockedByExtension = window.getComputedStyle(testDiv).display === 'none' || testDiv.offsetHeight === 0;
+    document.body.removeChild(testDiv);
+    if (blockedByExtension) {
+        resultsDiv.innerHTML += "<p>⚠ Detected blocking element — might be blocked by extension</p>";
+    }
+}
+</script>
+</body>
+</html>
