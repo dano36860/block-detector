@@ -2,70 +2,348 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Blocked Site Detector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enhanced Blocked Site Detector</title>
 <style>
-    body { font-family: Arial, sans-serif; margin: 40px; }
-    input { width: 300px; padding: 5px; }
-    button { padding: 5px 10px; margin-left: 5px; }
-    #results { margin-top: 20px; }
+    body { 
+        font-family: Arial, sans-serif; 
+        margin: 40px;
+        max-width: 800px;
+    }
+    input { 
+        width: 300px; 
+        padding: 8px; 
+        font-size: 14px;
+        border: 2px solid #ddd;
+        border-radius: 4px;
+    }
+    button { 
+        padding: 8px 16px; 
+        margin-left: 5px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    button:hover {
+        background: #0056b3;
+    }
+    #results { 
+        margin-top: 20px;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+    .status {
+        padding: 8px;
+        margin: 8px 0;
+        border-radius: 4px;
+        border-left: 4px solid #ddd;
+    }
+    .success {
+        background: #d4edda;
+        border-left-color: #28a745;
+        color: #155724;
+    }
+    .warning {
+        background: #fff3cd;
+        border-left-color: #ffc107;
+        color: #856404;
+    }
+    .error {
+        background: #f8d7da;
+        border-left-color: #dc3545;
+        color: #721c24;
+    }
+    .info {
+        background: #d1ecf1;
+        border-left-color: #17a2b8;
+        color: #0c5460;
+    }
     iframe { display: none; }
+    .summary {
+        font-weight: bold;
+        font-size: 18px;
+        margin-top: 15px;
+        padding: 12px;
+        border-radius: 4px;
+    }
 </style>
 </head>
 <body>
-<h1>Blocked Site Detector</h1>
-
-<p>Enter a URL to check if it might be blocked:</p>
-<input type="text" id="urlInput" placeholder="https://example.com">
-<button onclick="checkSite()">Check</button>
-
+<h1>🔍 Enhanced Blocked Site Detector</h1>
+<p>Enter a URL to check if it might be blocked by extensions, firewall, or DNS:</p>
+<input type="text" id="urlInput" placeholder="https://example.com" value="https://example.com">
+<button onclick="checkSite()">Check Site</button>
 <div id="results"></div>
 
 <script>
+let checks = {
+    fetch: null,
+    iframe: null,
+    timing: null,
+    webRequest: null,
+    extension: null
+};
+
 async function checkSite() {
     const url = document.getElementById('urlInput').value.trim();
     const resultsDiv = document.getElementById('results');
-    resultsDiv.innerHTML = `<p>Checking ${url}...</p>`;
-
-    if (!url) return alert("Please enter a URL");
-
-    // 1️⃣ Check network access via fetch
-    let networkBlocked = false;
+    
+    if (!url) {
+        alert("Please enter a URL");
+        return;
+    }
+    
+    // Validate URL
     try {
-        await fetch(url, { method: 'HEAD', mode: 'no-cors' });
-        resultsDiv.innerHTML += "<p>✅ Network request sent successfully</p>";
+        new URL(url);
+    } catch {
+        alert("Please enter a valid URL (include https://)");
+        return;
+    }
+    
+    resultsDiv.innerHTML = `<div class="status info">🔄 Checking ${url}...</div>`;
+    checks = { fetch: null, iframe: null, timing: null, webRequest: null, extension: null };
+    
+    // Run all checks in parallel
+    await Promise.all([
+        checkFetch(url, resultsDiv),
+        checkIframe(url, resultsDiv),
+        checkTiming(url, resultsDiv),
+        checkExtensionIndicators(resultsDiv),
+        checkWebRequestAPI(url, resultsDiv)
+    ]);
+    
+    // Give iframe time to load/fail
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Show summary
+    showSummary(resultsDiv, url);
+}
+
+async function checkFetch(url, resultsDiv) {
+    const startTime = performance.now();
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(url, { 
+            method: 'HEAD', 
+            mode: 'no-cors',
+            signal: controller.signal,
+            cache: 'no-store'
+        });
+        
+        clearTimeout(timeoutId);
+        const endTime = performance.now();
+        const duration = Math.round(endTime - startTime);
+        
+        checks.fetch = 'success';
+        addResult(resultsDiv, 'success', `✅ Fetch: Request completed (${duration}ms) - Network access OK`);
     } catch (err) {
-        networkBlocked = true;
-        resultsDiv.innerHTML += "<p>⚠ Network request failed — might be blocked by network/firewall</p>";
+        const endTime = performance.now();
+        const duration = Math.round(endTime - startTime);
+        
+        if (err.name === 'AbortError') {
+            checks.fetch = 'timeout';
+            addResult(resultsDiv, 'warning', `⚠️ Fetch: Request timeout after ${duration}ms - Possible network block`);
+        } else {
+            checks.fetch = 'blocked';
+            addResult(resultsDiv, 'error', `❌ Fetch: Failed (${err.message}) - Likely blocked by network/firewall`);
+        }
     }
+}
 
-    // 2️⃣ Check if redirected to known block page
-    const currentURL = window.location.href;
-    if (currentURL.startsWith("chrome-extension://") || currentURL.includes("blocked")) {
-        resultsDiv.innerHTML += "<p>⚠ Redirect detected — possibly blocked by extension</p>";
+function checkIframe(url, resultsDiv) {
+    return new Promise((resolve) => {
+        const iframe = document.createElement('iframe');
+        iframe.src = url;
+        iframe.style.display = 'none';
+        
+        const timeout = setTimeout(() => {
+            checks.iframe = 'timeout';
+            addResult(resultsDiv, 'warning', '⚠️ Iframe: Load timeout - Extension may be blocking');
+            document.body.removeChild(iframe);
+            resolve();
+        }, 3000);
+        
+        iframe.onload = () => {
+            clearTimeout(timeout);
+            try {
+                // Try to access iframe content (will fail for cross-origin)
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                if (iframeDoc && iframeDoc.body) {
+                    checks.iframe = 'success';
+                    addResult(resultsDiv, 'success', '✅ Iframe: Loaded successfully - Site accessible');
+                }
+            } catch (e) {
+                // Cross-origin is expected, but iframe loaded
+                checks.iframe = 'success';
+                addResult(resultsDiv, 'success', '✅ Iframe: Loaded (cross-origin) - Site accessible');
+            }
+            document.body.removeChild(iframe);
+            resolve();
+        };
+        
+        iframe.onerror = () => {
+            clearTimeout(timeout);
+            checks.iframe = 'blocked';
+            addResult(resultsDiv, 'error', '❌ Iframe: Failed to load - Likely blocked by extension or CSP');
+            document.body.removeChild(iframe);
+            resolve();
+        };
+        
+        document.body.appendChild(iframe);
+    });
+}
+
+async function checkTiming(url, resultsDiv) {
+    try {
+        const img = new Image();
+        const startTime = performance.now();
+        
+        const loadPromise = new Promise((resolve, reject) => {
+            img.onload = () => resolve('loaded');
+            img.onerror = () => reject('error');
+            setTimeout(() => reject('timeout'), 3000);
+        });
+        
+        img.src = url + '/favicon.ico?' + Date.now();
+        
+        try {
+            await loadPromise;
+            const endTime = performance.now();
+            const duration = Math.round(endTime - startTime);
+            
+            if (duration < 10) {
+                checks.timing = 'instant';
+                addResult(resultsDiv, 'warning', `⚠️ Timing: Instant failure (${duration}ms) - Extension likely blocking`);
+            } else {
+                checks.timing = 'normal';
+                addResult(resultsDiv, 'success', `✅ Timing: Normal response (${duration}ms)`);
+            }
+        } catch (err) {
+            const endTime = performance.now();
+            const duration = Math.round(endTime - startTime);
+            
+            if (duration < 10) {
+                checks.timing = 'instant';
+                addResult(resultsDiv, 'warning', `⚠️ Timing: Instant block (${duration}ms) - Extension blocking detected`);
+            } else {
+                checks.timing = 'slow';
+                addResult(resultsDiv, 'info', `ℹ️ Timing: Slow failure (${duration}ms) - Network/DNS issue`);
+            }
+        }
+    } catch (err) {
+        addResult(resultsDiv, 'info', 'ℹ️ Timing: Check failed');
     }
+}
 
-    // 3️⃣ Check via iframe load/error
-    const iframe = document.createElement('iframe');
-    iframe.src = url;
-    iframe.onload = () => {
-        resultsDiv.innerHTML += "<p>✅ Iframe loaded successfully — site probably accessible</p>";
-        document.body.removeChild(iframe);
-    };
-    iframe.onerror = () => {
-        resultsDiv.innerHTML += "<p>⚠ Iframe failed to load — site might be blocked or redirected</p>";
-        document.body.removeChild(iframe);
-    };
-    document.body.appendChild(iframe);
-
-    // 4️⃣ Optional: adblock / extension check
+function checkExtensionIndicators(resultsDiv) {
+    let extensionDetected = false;
+    
+    // Check for common ad-blocker CSS classes
     const testDiv = document.createElement('div');
-    testDiv.className = 'adsbox';
+    testDiv.className = 'adsbox ad-banner advertisement';
+    testDiv.style.height = '1px';
     document.body.appendChild(testDiv);
-    const blockedByExtension = window.getComputedStyle(testDiv).display === 'none' || testDiv.offsetHeight === 0;
-    document.body.removeChild(testDiv);
-    if (blockedByExtension) {
-        resultsDiv.innerHTML += "<p>⚠ Detected blocking element — might be blocked by extension</p>";
+    
+    setTimeout(() => {
+        const isHidden = window.getComputedStyle(testDiv).display === 'none' || 
+                        testDiv.offsetHeight === 0;
+        document.body.removeChild(testDiv);
+        
+        if (isHidden) {
+            extensionDetected = true;
+            checks.extension = 'detected';
+            addResult(resultsDiv, 'warning', '⚠️ Extension: Ad-blocker detected - May block certain requests');
+        } else {
+            checks.extension = 'none';
+            addResult(resultsDiv, 'info', 'ℹ️ Extension: No ad-blocker detected');
+        }
+    }, 100);
+    
+    // Check for extension-modified properties
+    if (window.chrome && window.chrome.runtime && window.chrome.runtime.id) {
+        extensionDetected = true;
+        addResult(resultsDiv, 'info', 'ℹ️ Extension: Chrome extension context detected');
     }
+}
+
+async function checkWebRequestAPI(url, resultsDiv) {
+    // This check attempts to detect if WebRequest API is intercepting
+    // by comparing timing patterns
+    try {
+        const requests = [];
+        const iterations = 3;
+        
+        for (let i = 0; i < iterations; i++) {
+            const start = performance.now();
+            try {
+                await fetch(url, { 
+                    method: 'HEAD', 
+                    mode: 'no-cors',
+                    cache: 'no-store'
+                });
+            } catch (e) {}
+            const duration = performance.now() - start;
+            requests.push(duration);
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+        const avgTime = requests.reduce((a, b) => a + b, 0) / requests.length;
+        const hasInstantBlocks = requests.filter(t => t < 10).length > 1;
+        
+        if (hasInstantBlocks) {
+            checks.webRequest = 'blocked';
+            addResult(resultsDiv, 'error', '❌ Pattern: Multiple instant blocks detected - Extension is blocking');
+        } else if (avgTime > 100) {
+            checks.webRequest = 'slow';
+            addResult(resultsDiv, 'info', `ℹ️ Pattern: Slow average response (${Math.round(avgTime)}ms) - Network delay`);
+        } else {
+            checks.webRequest = 'normal';
+            addResult(resultsDiv, 'success', `✅ Pattern: Normal timing patterns (${Math.round(avgTime)}ms avg)`);
+        }
+    } catch (err) {
+        addResult(resultsDiv, 'info', 'ℹ️ Pattern: Analysis inconclusive');
+    }
+}
+
+function addResult(resultsDiv, type, message) {
+    const div = document.createElement('div');
+    div.className = `status ${type}`;
+    div.textContent = message;
+    resultsDiv.appendChild(div);
+}
+
+function showSummary(resultsDiv, url) {
+    const summary = document.createElement('div');
+    summary.className = 'summary';
+    
+    const blockedCount = Object.values(checks).filter(v => v === 'blocked' || v === 'instant').length;
+    const successCount = Object.values(checks).filter(v => v === 'success' || v === 'normal').length;
+    
+    if (checks.timing === 'instant' || checks.webRequest === 'blocked') {
+        summary.textContent = '🚫 VERDICT: Site is likely BLOCKED by a browser extension';
+        summary.style.background = '#f8d7da';
+        summary.style.color = '#721c24';
+    } else if (blockedCount > successCount) {
+        summary.textContent = '⚠️ VERDICT: Site may be BLOCKED by firewall or DNS';
+        summary.style.background = '#fff3cd';
+        summary.style.color = '#856404';
+    } else if (successCount > 0) {
+        summary.textContent = '✅ VERDICT: Site appears ACCESSIBLE';
+        summary.style.background = '#d4edda';
+        summary.style.color = '#155724';
+    } else {
+        summary.textContent = '❓ VERDICT: Results inconclusive - Try accessing directly';
+        summary.style.background = '#d1ecf1';
+        summary.style.color = '#0c5460';
+    }
+    
+    resultsDiv.appendChild(summary);
 }
 </script>
 </body>
